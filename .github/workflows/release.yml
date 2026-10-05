@@ -1,0 +1,49 @@
+name: Build Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to upload to"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Run tests
+        run: python -m unittest -q test_note_store.py
+      - name: Build application
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
+          --name "彈出記事欄" popup_note_bar.py
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag }}' } else { '${{ github.ref_name }}' }
+          $version = $tag.TrimStart('v')
+          $stage = Join-Path $env:RUNNER_TEMP 'PopupNoteBar'
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -LiteralPath 'dist\彈出記事欄' -Destination (Join-Path $stage '彈出記事欄程式') -Recurse
+          Copy-Item -LiteralPath 'README.md' -Destination $stage
+          Copy-Item -LiteralPath 'LICENSE' -Destination $stage
+          Compress-Archive -LiteralPath $stage -DestinationPath "PopupNoteBar_${version}_Windows.zip"
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RELEASE_FILE=PopupNoteBar_${version}_Windows.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload $env:RELEASE_TAG $env:RELEASE_FILE --clobber
